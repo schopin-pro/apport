@@ -8,6 +8,7 @@ import tempfile
 import unittest
 import unittest.mock
 
+from launchpadlib.credentials import AnonymousAccessToken
 from launchpadlib.errors import HTTPError
 
 import apport.report
@@ -642,7 +643,7 @@ and more
         )
 
         project_db = CrashDatabase(
-            os.environ.get("LP_CREDENTIALS"),
+            os.environ.get("LP_CREDENTIALS", AnonymousAccessToken()),
             {
                 "project": "langpack-o-matic",
                 "launchpad_instance": launchpad_instance,
@@ -782,7 +783,7 @@ and more
         )
 
         return CrashDatabase(
-            os.environ.get("LP_CREDENTIALS"),
+            os.environ.get("LP_CREDENTIALS", AnonymousAccessToken()),
             {"distro": "ubuntu", "launchpad_instance": launchpad_instance},
         )
 
