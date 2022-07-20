@@ -1,0 +1,23 @@
+From: Benjamin Drung <bdrung@ubuntu.com>
+Date: Thu, 9 Jun 2022 15:44:58 +0200
+Subject: Specify exact package name
+
+---
+ apport/crashdb_impl/launchpad.py | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/apport/crashdb_impl/launchpad.py b/apport/crashdb_impl/launchpad.py
+index 34d8779..8ff6457 100644
+--- a/apport/crashdb_impl/launchpad.py
++++ b/apport/crashdb_impl/launchpad.py
+@@ -151,8 +151,8 @@ class CrashDatabase(apport.crashdb.CrashDatabase):
+ 
+         if Launchpad is None:
+             sys.stderr.write(
+-                "ERROR: The launchpadlib Python %s module is not installed."
+-                " This functionality is not available.\n" % sys.version[0]
++                "ERROR: The python3-launchpadlib package is not installed."
++                " This functionality is not available.\n"
+             )
+             sys.exit(1)
+ 

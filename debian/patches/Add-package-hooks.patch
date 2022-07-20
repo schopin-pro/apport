@@ -1,0 +1,593 @@
+From: Benjamin Drung <bdrung@ubuntu.com>
+Date: Thu, 9 Jun 2022 15:30:36 +0200
+Subject: Add package hooks
+
+---
+ data/package-hooks/source_debian-installer.py  |  68 ++++++++
+ data/package-hooks/source_linux.py             | 166 +++++++++++++++++++
+ data/package-hooks/source_ubiquity.py          | 217 +++++++++++++++++++++++++
+ data/package-hooks/subiquity.py                |  46 ++++++
+ data/package-hooks/ubuntu-desktop-installer.py |  49 ++++++
+ 5 files changed, 546 insertions(+)
+ create mode 100644 data/package-hooks/source_debian-installer.py
+ create mode 100644 data/package-hooks/source_linux.py
+ create mode 100644 data/package-hooks/source_ubiquity.py
+ create mode 100644 data/package-hooks/subiquity.py
+ create mode 100644 data/package-hooks/ubuntu-desktop-installer.py
+
+diff --git a/data/package-hooks/source_debian-installer.py b/data/package-hooks/source_debian-installer.py
+new file mode 100644
+index 0000000..de9dde9
+--- /dev/null
++++ b/data/package-hooks/source_debian-installer.py
+@@ -0,0 +1,68 @@
++"""Apport package hook for the Debian installer.
++
++Copyright (C) 2011 Canonical Ltd.
++Authors: Colin Watson <cjwatson@ubuntu.com>,
++         Brian Murray <brian@ubuntu.com>"""
++
++import os
++
++from apport.hookutils import (
++    attach_hardware,
++    attach_root_command_outputs,
++    command_available,
++    command_output,
++)
++
++
++def add_installation_log(report, ident, name):
++    if os.path.exists("/var/log/installer/%s" % name):
++        f = "/var/log/installer/%s" % name
++    elif os.path.exists("/var/log/%s" % name):
++        f = "/var/log/%s" % name
++    else:
++        return
++
++    if os.access(f, os.R_OK):
++        report[ident] = (f,)
++    else:
++        attach_root_command_outputs(report, {ident: "cat '%s'" % f})
++
++
++def add_info(report):
++    attach_hardware(report)
++
++    report["DiskUsage"] = command_output(["df"])
++    report["MemoryUsage"] = command_output(["free"])
++
++    if command_available("dmraid"):
++        attach_root_command_outputs(
++            report, {"DmraidSets": "dmraid -s", "DmraidDevices": "dmraid -r"}
++        )
++        if command_available("dmsetup"):
++            attach_root_command_outputs(
++                report, {"DeviceMapperTables": "dmsetup table"}
++            )
++
++    try:
++        installer_version = open("/var/log/installer/version")
++        for line in installer_version:
++            if line.startswith("ubiquity "):
++                # File these reports on the ubiquity package instead
++                report["SourcePackage"] = "ubiquity"
++                break
++        installer_version.close()
++    except IOError:
++        pass
++
++    add_installation_log(report, "DIPartman", "partman")
++    add_installation_log(report, "DISyslog", "syslog")
++
++
++if __name__ == "__main__":
++    report = {}
++    add_info(report)
++    for key in report:
++        if isinstance(report[key], type("")):
++            print("%s: %s" % (key, report[key].split("\n", 1)[0]))
++        else:
++            print("%s: %s" % (key, type(report[key])))
+diff --git a/data/package-hooks/source_linux.py b/data/package-hooks/source_linux.py
+new file mode 100644
+index 0000000..bc63208
+--- /dev/null
++++ b/data/package-hooks/source_linux.py
+@@ -0,0 +1,166 @@
++"""Apport package hook for the Linux kernel.
++
++(c) 2008 Canonical Ltd.
++Contributors:
++Matt Zimmerman <mdz@canonical.com>
++Martin Pitt <martin.pitt@canonical.com>
++Brian Murray <brian@canonical.com>
++
++This program is free software; you can redistribute it and/or modify it
++under the terms of the GNU General Public License as published by the
++Free Software Foundation; either version 2 of the License, or (at your
++option) any later version.  See http://www.gnu.org/copyleft/gpl.html for
++the full text of the license.
++"""
++
++import os.path
++import re
++
++import apport
++import apport.hookutils
++
++SUBMIT_SCRIPT = "/usr/bin/kerneloops-submit"
++
++
++def add_info(report, ui):
++
++    # If running an upstream kernel, instruct reporter to file bug upstream
++    abi = re.search("-(.*?)-", report["Uname"])
++    if abi and (abi.group(1) == "999" or re.search("^0\\d", abi.group(1))):
++        ui.information(
++            "It appears you are currently running a mainline kernel.  It would"
++            " be better to report this bug upstream at"
++            " http://bugzilla.kernel.org/ so that the upstream kernel"
++            " developers are aware of the issue.  If you'd still like to file"
++            " a bug against the Ubuntu kernel, please boot with an official"
++            " Ubuntu kernel and re-file."
++        )
++        report[
++            "UnreportableReason"
++        ] = "The running kernel is not an Ubuntu kernel"
++        return
++
++    version_signature = report.get("ProcVersionSignature", "")
++    if not version_signature.startswith("Ubuntu ") and "CrashDB" not in report:
++        report[
++            "UnreportableReason"
++        ] = "The running kernel is not an Ubuntu kernel"
++        return
++
++    # Prevent reports against the linux-meta and linux-signed families,
++    # redirect to the main package.
++    for src_pkg in ["linux-meta", "linux-signed"]:
++        if report["SourcePackage"].startswith(src_pkg):
++            report["SourcePackage"] = report["SourcePackage"].replace(
++                src_pkg, "linux", 1
++            )
++
++    report.setdefault("Tags", "")
++
++    # Tag up back ported kernel reports for easy identification
++    if report["SourcePackage"].startswith("linux-lts-"):
++        report["Tags"] += " qa-kernel-lts-testing"
++
++    apport.hookutils.attach_hardware(report)
++    apport.hookutils.attach_alsa(report)
++    apport.hookutils.attach_wifi(report)
++    apport.hookutils.attach_file(report, "/proc/fb", "ProcFB")
++
++    staging_drivers = re.findall(
++        "(\\w+): module is from the staging directory", report["CurrentDmesg"]
++    )
++    if staging_drivers:
++        staging_drivers = list(set(staging_drivers))
++        report["StagingDrivers"] = " ".join(staging_drivers)
++        report["Tags"] += " staging"
++        # Only if there is an existing title prepend '[STAGING]'.
++        # Changed to prevent bug titles with just '[STAGING] '.
++        if report.get("Title"):
++            report["Title"] = "[STAGING] " + report.get("Title")
++
++    apport.hookutils.attach_file_if_exists(
++        report, "/etc/initramfs-tools/conf.d/resume", key="HibernationDevice"
++    )
++
++    uname_release = os.uname()[2]
++    lrm_package_name = "linux-restricted-modules-%s" % uname_release
++    lbm_package_name = "linux-backports-modules-%s" % uname_release
++
++    apport.hookutils.attach_related_packages(
++        report, [lrm_package_name, lbm_package_name, "linux-firmware"]
++    )
++
++    if (
++        "Failure" in report
++        and report["Failure"] == "oops"
++        and "OopsText" in report
++        and os.path.exists(SUBMIT_SCRIPT)
++    ):
++        # tag kerneloopses with the version of the kerneloops package
++        apport.hookutils.attach_related_packages(report, ["kerneloops-daemon"])
++        oopstext = report["OopsText"]
++        dupe_sig1 = None
++        dupe_sig2 = None
++        for line in oopstext.splitlines():
++            if line.startswith("BUG:"):
++                bug = re.compile("at [0-9a-f]+$")
++                dupe_sig1 = bug.sub("at location", line)
++            rip = re.compile("^[RE]?IP:")
++            if re.search(rip, line):
++                loc = re.compile("\\[<[0-9a-f]+>\\]")
++                dupe_sig2 = loc.sub("location", line)
++        if dupe_sig1 and dupe_sig2:
++            report["DuplicateSignature"] = "%s %s" % (dupe_sig1, dupe_sig2)
++        # it's from kerneloops, ask the user whether to submit there as well
++        if ui:
++            # Some OopsText begin with "--- [ cut here ] ---", so remove it
++            oopstext = re.sub("---.*\n", "", oopstext)
++            first_line = re.match(".*\n", oopstext)
++            ip = re.search("(R|E)?IP\\:.*\n", oopstext)
++            kernel_driver = re.search(
++                "(R|E)?IP(:| is at) .*\\[(.*)\\]\n", oopstext
++            )
++            call_trace = re.search("Call Trace(.*\n){,10}", oopstext)
++            oops = ""
++            if first_line:
++                oops += first_line.group(0)
++            if ip:
++                oops += ip.group(0)
++            if call_trace:
++                oops += call_trace.group(0)
++            if kernel_driver:
++                report["Tags"] += " kernel-driver-%s" % kernel_driver.group(3)
++            # 2012-01-13 - disable submission question as kerneloops.org is
++            #   down
++            # if ui.yesno(
++            #     "This report may also be submitted to http://kerneloops.org/"
++            #     " in order to help collect aggregate information about"
++            #     " kernel problems. This aids in identifying widespread"
++            #     " issues and problematic areas. A condensed summary of"
++            #     " the Oops is shown below.  Would you like to submit"
++            #     " information about this crash to kerneloops.org?\n\n%s"
++            #     % oops
++            # ):
++            #     text = report["OopsText"]
++            #     proc = subprocess.Popen(SUBMIT_SCRIPT, stdin=subprocess.PIPE)
++            #     proc.communicate(text)
++    elif "Failure" in report and (
++        "resume" in report["Failure"] or "suspend" in report["Failure"]
++    ):
++        crash_signature = report.crash_signature()
++        if crash_signature:
++            report["DuplicateSignature"] = crash_signature
++
++    if report.get("ProblemType") == "Package":
++        # in case there is a failure with a grub script
++        apport.hookutils.attach_related_packages(report, ["grub-pc"])
++
++
++if __name__ == "__main__":
++    r = apport.Report()
++    r.add_proc_info()
++    r.add_os_info()
++    r["ProcVersionSignature"] = "Ubuntu 3.4.0"
++    add_info(r, None)
++    for k, v in r.items():
++        print("%s: %s" % (k, v))
+diff --git a/data/package-hooks/source_ubiquity.py b/data/package-hooks/source_ubiquity.py
+new file mode 100644
+index 0000000..ff85ecd
+--- /dev/null
++++ b/data/package-hooks/source_ubiquity.py
+@@ -0,0 +1,217 @@
++"""Apport package hook for the ubiquity live CD installer.
++
++Copyright (C) 2009 Canonical Ltd.
++Authors: Colin Watson <cjwatson@ubuntu.com>,
++         Brian Murray <brian@ubuntu.com>"""
++
++import os.path
++import re
++
++import apport.hookutils
++
++
++def add_installation_log(report, ident, name):
++    f = False
++    for try_location in (
++        "/var/log/installer/%s",
++        "/var/log/%s",
++        "/var/log/upstart/%s",
++    ):
++        if os.path.exists(try_location % name):
++            f = try_location % name
++            break
++    if not f:
++        return
++
++    if os.access(f, os.R_OK):
++        with open(f, "rb") as f:
++            report[ident] = f.read().decode("UTF-8", "replace")
++    elif os.path.exists(f):
++        apport.hookutils.attach_root_command_outputs(
++            report, {ident: "cat '%s'" % f}
++        )
++
++    if ident in report and isinstance(report[ident], bytes):
++        try:
++            report[ident] = report[ident].decode("UTF-8", "replace")
++        except (UnicodeDecodeError, KeyError):
++            pass
++
++
++def prepare_duplicate_signature(syslog, collect_grub, collect_trace):
++    collect = ""
++    for line in syslog.split("\n"):
++        if collect_grub:
++            if "grub-installer:" in line and collect == "":
++                collect = " ".join(line.split(" ")[4:]) + "\n"
++                continue
++            elif "grub-installer:" in line and collect != "":
++                collect += " ".join(line.split(" ")[4:]) + "\n"
++                continue
++        if not collect_trace and collect != "":
++            return collect
++        if "Traceback (most recent call last):" in line and collect_grub:
++            collect += " ".join(line.split(" ")[5:]) + "\n"
++            continue
++        if "Traceback (most recent call last):" in line and not collect_grub:
++            collect = " ".join(line.split(" ")[5:]) + "\n"
++            continue
++        if len(line.split(" ")[5:]) == 1 and "Traceback" in collect:
++            if collect != "":
++                return collect
++        if "Traceback" not in collect:
++            continue
++        collect += " ".join(line.split(" ")[5:]) + "\n"
++
++
++def add_info(report, ui):
++    add_installation_log(report, "UbiquitySyslog", "syslog")
++    syslog = report["UbiquitySyslog"]
++    if "Buffer I/O error on device" in syslog:
++        if re.search("Attached .* CD-ROM (\\w+)", syslog):
++            cd_drive = re.search("Attached .* CD-ROM (\\w+)", syslog).group(1)
++            cd_error = re.search(
++                "Buffer I/O error on device %s" % cd_drive, syslog
++            )
++        else:
++            cd_error = None
++        if cd_error:
++            ui.information(
++                "The system log from your installation contains an error.  The"
++                " specific error commonly occurs when there is an issue with"
++                " the media from which you were installing.  This can happen"
++                " when your media is dirty or damaged or when you've burned"
++                " the media at a high speed.  Please try cleaning the media"
++                " and or burning new media at a lower speed.  In the event"
++                " that you continue to encounter these errors it may be an"
++                " issue with your CD / DVD drive."
++            )
++            raise StopIteration
++    if "I/O error, dev" in syslog:
++        # check for either usb stick (install media) or hard disk I/O errors
++        if re.search("I/O error, dev (\\w+)", syslog):
++            error_disk = re.search("I/O error, dev (\\w+)", syslog).group(1)
++            mount = apport.hookutils.command_output(
++                ["grep", "%s" % error_disk, "/proc/mounts"]
++            )
++            if "target" in mount:
++                ui.information(
++                    "The system log from your installation contains an error."
++                    "  The specific error commonly occurs when there is an"
++                    " issue with the disk to which you are trying to install"
++                    " Ubuntu.  It is recommended that you back up important"
++                    " data on your disk and investigate the situation."
++                    "  Measures you might take include checking cable"
++                    " connections for your disks and using software tools to"
++                    " investigate the health of your hardware."
++                )
++                raise StopIteration
++            if "cdrom" in mount:
++                ui.information(
++                    "The system log from your installation contains an error."
++                    "  The specific error commonly occurs when there is an"
++                    " issue with the media from which you were installing."
++                    "  Please try creating the USB stick you were installing"
++                    " from again or try installing from a different USB stick."
++                )
++                raise StopIteration
++    if "SQUASHFS error: Unable to read" in syslog:
++        ui.information(
++            "The system log from your installation contains an error.  The"
++            " specific error commonly occurs when there is an issue with the"
++            " media from which you were installing.  This can happen when your"
++            " media is dirty or damaged or when you've burned the media at a"
++            " high speed.  Please try cleaning the media and or burning new"
++            " media at a lower speed.  In the event that you continue to"
++            " encounter these errors it may be an issue with your CD / DVD"
++            " drive."
++        )
++        raise StopIteration
++
++    if "Kernel command line" in syslog:
++        install_cmdline = re.search("Kernel command line: (.*)", syslog).group(
++            1
++        )
++    else:
++        install_cmdline = None
++    if install_cmdline:
++        report["InstallCmdLine"] = install_cmdline
++
++    if "Traceback" not in report:
++        collect_grub = False
++        collect_trace = False
++        if (
++            "grub-install ran successfully" not in syslog
++            and "grub-installer:" in syslog
++        ):
++            collect_grub = True
++        if "Traceback" in syslog:
++            collect_trace = True
++        if (
++            report["ProblemType"] != "Bug"
++            and collect_grub
++            or report["ProblemType"] != "Bug"
++            and collect_trace
++        ):
++            duplicate_signature = prepare_duplicate_signature(
++                syslog, collect_grub, collect_trace
++            )
++            if duplicate_signature:
++                report["DuplicateSignature"] = duplicate_signature
++        if collect_grub:
++            report["SourcePackage"] = "grub-installer"
++
++    match = re.search("ubiquity.*Ubiquity (.*)\n", syslog)
++    if match:
++        match = match.group(1)
++    report.setdefault("Tags", "")
++    if match:
++        report["Tags"] += " ubiquity-%s" % match.split()[0]
++
++    # tag bug reports where people choose to "upgrade" their install of Ubuntu
++    if re.search("UpgradeSystem\\(\\) was called with safe mode", syslog):
++        report["Tags"] += " ubiquity-upgrade"
++
++    add_installation_log(report, "UbiquityPartman", "partman")
++
++    debug_log = "/var/log/installer/debug"
++    debug_mode = False
++    if os.path.exists(debug_log):
++        try:
++            fp = open(debug_log, "r")
++        except (OSError, IOError):
++            pass
++        else:
++            with fp:
++                for line in fp:
++                    if line.startswith("debconf (developer)"):
++                        debug_mode = True
++                        break
++            if debug_mode:
++                response = ui.yesno(
++                    "The debug log file from your installation would help us"
++                    " a lot but includes the password you used for your user"
++                    " when installing Ubuntu.  Do you want to include this"
++                    " log file?"
++                )
++                if response is None:
++                    raise StopIteration
++                if response:
++                    add_installation_log(report, "UbiquityDebug", "debug")
++            else:
++                add_installation_log(report, "UbiquityDebug", "debug")
++
++    add_installation_log(report, "UbiquityDm", "dm")
++    add_installation_log(report, "UpstartUbiquity", "ubiquity.log")
++
++    # add seed name as Tag so we know which image was used
++    with open("/proc/cmdline", "r") as f:
++        cmdline = f.read()
++    match = re.search("([^/]+)\\.seed", cmdline)
++    if match:
++        report["Tags"] += " " + match.group(1)
++
++    add_installation_log(report, "Casper", "casper.log")
++    add_installation_log(report, "OemConfigLog", "oem-config.log")
++    if "OemConfigLog" in report:
++        report["Tags"] += " oem-config"
+diff --git a/data/package-hooks/subiquity.py b/data/package-hooks/subiquity.py
+new file mode 100644
+index 0000000..f8bc4a8
+--- /dev/null
++++ b/data/package-hooks/subiquity.py
+@@ -0,0 +1,46 @@
++"""
++Send reports about subiquity to the correct Launchpad project.
++
++"""
++import os
++
++from apport import hookutils
++
++
++def add_info(report, ui):
++    # TODO: read the version from the log file?
++    logfile = os.path.realpath("/var/log/installer/subiquity-debug.log")
++    revision = "unknown"
++    if os.path.exists(logfile):
++        hookutils.attach_file(report, "logfile", "InstallerLog")
++        with open(logfile) as fp:
++            first_line = fp.readline()
++        marker = "Starting Subiquity revision"
++        if marker in first_line:
++            revision = first_line.split(marker)[1].strip()
++    report["Package"] = "subiquity ({})".format(revision)
++    report["SourcePackage"] = "subiquity"
++    # rewrite this section so the report goes to the project in Launchpad
++    report[
++        "CrashDB"
++    ] = """\
++{
++    "impl": "launchpad",
++    "project": "subiquity",
++    "bug_pattern_url": "http://people.canonical.com/"
++    "~ubuntu-archive/bugpatterns/bugpatterns.xml",
++}
++"""
++
++    # add in subiquity stuff
++    hookutils.attach_file_if_exists(
++        report,
++        "/var/log/installer/subiquity-curtin-install.conf",
++        "CurtinConfig",
++    )
++    hookutils.attach_file_if_exists(
++        report, "/var/log/installer/curtin-install.log", "CurtinLog"
++    )
++    hookutils.attach_file_if_exists(
++        report, "/var/log/installer/block/probe-data.json", "ProbeData"
++    )
+diff --git a/data/package-hooks/ubuntu-desktop-installer.py b/data/package-hooks/ubuntu-desktop-installer.py
+new file mode 100644
+index 0000000..024966e
+--- /dev/null
++++ b/data/package-hooks/ubuntu-desktop-installer.py
+@@ -0,0 +1,49 @@
++"""
++Send reports about ubuntu-desktop-installer to the correct Launchpad project.
++
++"""
++import os
++
++from apport import hookutils
++
++
++def add_info(report, ui):
++
++    udilog = os.path.realpath(
++        "/var/log/installer/ubuntu_desktop_installer.log"
++    )
++    hookutils.attach_file_if_exists(report, udilog, "UdiLog")
++
++    report["SourcePackage"] = "ubuntu-desktop-installer"
++    # rewrite this section so the report goes to the project in Launchpad
++    report[
++        "CrashDB"
++    ] = """\
++{
++    "impl": "launchpad",
++    "project": "ubuntu-desktop-installer",
++    "bug_pattern_url": "http://people.canonical.com/"
++    "~ubuntu-archive/bugpatterns/bugpatterns.xml",
++}
++"""
++
++    subiquitylog = os.path.realpath(
++        "/var/log/installer/subiquity-server-debug.log"
++    )
++    hookutils.attach_file_if_exists(report, subiquitylog, "SubiquityLog")
++
++    hookutils.attach_file_if_exists(
++        report,
++        "/var/log/installer/subiquity-curtin-install.conf",
++        "CurtinConfig",
++    )
++    hookutils.attach_file_if_exists(
++        report, "/var/log/curtin/install.log", "CurtinLog"
++    )
++    hookutils.attach_file_if_exists(
++        report, "/var/log/curtin/curtin-error-logs.tar", "CurtinError"
++    )
++
++    hookutils.attach_file_if_exists(
++        report, "/var/log/installer/block/probe-data.json", "ProbeData"
++    )

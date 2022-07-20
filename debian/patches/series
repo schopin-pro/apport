@@ -1,0 +1,6 @@
+Add-bin-oem-getlogs.patch
+Add-general-hooks.patch
+Add-package-hooks.patch
+Blacklist-wine-preloader.patch
+Default-to-Ubuntu-crash-DB.patch
+Specify-exact-package-name.patch

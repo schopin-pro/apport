@@ -1,0 +1,16 @@
+From: Benjamin Drung <bdrung@ubuntu.com>
+Date: Thu, 9 Jun 2022 15:31:53 +0200
+Subject: Blacklist wine-preloader
+
+---
+ etc/apport/blacklist.d/apport | 1 +
+ 1 file changed, 1 insertion(+)
+ create mode 100644 etc/apport/blacklist.d/apport
+
+diff --git a/etc/apport/blacklist.d/apport b/etc/apport/blacklist.d/apport
+new file mode 100644
+index 0000000..53b1fa5
+--- /dev/null
++++ b/etc/apport/blacklist.d/apport
+@@ -0,0 +1 @@
++/usr/bin/wine-preloader
