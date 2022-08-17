@@ -6,7 +6,7 @@ import tempfile
 import time
 import unittest
 
-from tests.helper import import_module_from_file
+from tests.helper import import_module_from_file, skip_if_command_is_missing
 from tests.paths import is_local_source_directory
 
 if is_local_source_directory():
@@ -15,7 +15,7 @@ else:
     from apport.packaging_impl import impl
 
 
-@unittest.skipIf(shutil.which("dpkg") is None, "dpkg not available")
+@skip_if_command_is_missing("dpkg")
 class T(unittest.TestCase):
     # pylint: disable=protected-access
 

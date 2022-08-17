@@ -1,7 +1,6 @@
-import shutil
 import unittest
 
-from tests.helper import import_module_from_file
+from tests.helper import import_module_from_file, skip_if_command_is_missing
 from tests.paths import is_local_source_directory
 
 try:
@@ -15,7 +14,7 @@ except ImportError:
 
 
 @unittest.skipUnless(HAS_RPM, "rpm module not available")
-@unittest.skipIf(shutil.which("rpm") is None, "rpm not available")
+@skip_if_command_is_missing("rpm")
 class T(unittest.TestCase):
     def test_get_dependencies(self):
         """get_dependencies()."""
