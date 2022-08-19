@@ -1,5 +1,41 @@
 This file summarizes the major and interesting changes for each release. For a
-detailed list of changes, please see ChangeLog.
+detailed list of changes, please see the git history.
+
+2.23.0 (2022-08-19)
+-------------------
+
+* apport-gtk: Fix importing the wrong Gdk version (regression in 2.22.0)
+* tests: Fix killing itself in test_unpackaged_script
+* tests: Fix killing test executable too early (LP: #1980390)
+* tests: Fix wrong Ubuntu archive URI on ports
+* tests: Fix KeyError in test_install_packages_unversioned
+* Fix trying to find debug packages for non-existing version
+* tests: Fix IndexError in test_crash_setuid_drop
+* Add support for qastaging.launchpad.net
+* tests/run-linters: Check for pylint errors
+* apport: Initialize error log as first step
+* unkillable_shutdown: Fix failure if report file exists
+* Fix PermissionError for setuid programs inside container (LP: #1982487)
+* Fix reading from stdin inside containers (LP: #1982555)
+* data/apport: Drop support for positional arguments
+* Open files explicitly with UTF-8 encoding
+* Remove partially implemented and unused login API
+* apport-kde: Implement "Examine locally" for KDE as well
+* apport-kde: Fix inverse order of choices (LP: #1967965)
+* Suggest installing python3-launchpadlib if missing and needed (LP: #1958059)
+* apport-kde: Drop old workaround for bug in SIP destructor (LP: #1980553)
+* apport-kde: Import apport before usage (LP: #1980553)
+* apport-gtk: Gracefully handle import failure of gi (LP: #1980561)
+* apport-gtk: Catch AssertionError when importing Gdk (LP: #1980238)
+* apport-unpack: Fix ValueError: ['separator'] has no binary content
+  (LP: #1889443)
+* Fix _run_hook getting called with ui=None (LP: #1983481)
+* Break cyclic imports inside apport module
+* Query /etc/os-release for version codename. lsb_release will not be needed
+  in most cases any more.
+* Determine system package manager during runtime
+* Address pylint errors and warning and most conventions and refactoring
+* tests/run-linters: Run also pylint and pydocstyle (if present)
 
 2.22.0 (2022-06-27)
 -------------------
